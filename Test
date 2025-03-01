@@ -1,0 +1,145 @@
+import torch
+import torch.nn as nn
+import torchvision.models as models
+import torchvision.transforms as transforms
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
+import numpy as np
+import pandas as pd
+
+
+class SiameseNetworkRes34(nn.Module):
+    def __init__(self):
+        super(SiameseNetworkRes34, self).__init__()
+        
+        # Use a pretrained ResNet as the feature extractor
+        self.base_model = models.resnet34(pretrained=True)
+        self.base_model.fc = nn.Identity()  # Remove classification head
+        
+        # Fully connected layer for scoring
+        self.fc = nn.Linear(512, 1)  # 512 is ResNet18's feature size
+
+    def forward(self, img1, img2):
+        # Extract features from both images
+        feat1 = self.base_model(img1)
+        feat2 = self.base_model(img2)
+        
+        # Convert features into scalar scores
+        score1 = self.fc(feat1)
+        score2 = self.fc(feat2)
+        
+        return score1, score2
+
+class SiameseNetworkResB0(nn.Module):
+    def __init__(self):
+        super(SiameseNetworkResB0, self).__init__()
+
+        # Use a pretrained EfficientNet as the feature extractor
+        self.base_model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
+        self.base_model.classifier = nn.Identity()  # Remove classification head
+
+        # Fully connected layer for scoring
+        self.fc = nn.Linear(1280, 1)  # EfficientNet-B0 outputs 1280 features
+
+    def forward(self, img1, img2):
+        feat1 = self.base_model(img1)
+        feat2 = self.base_model(img2)
+
+        score1 = self.fc(feat1)
+        score2 = self.fc(feat2)
+
+        return score1, score2
+
+
+
+
+import os
+
+
+# Define the dataset class again
+class FoodDataset(Dataset):
+    def __init__(self, dataframe, image_folder, transform=None):
+        self.data = dataframe
+        self.image_folder = image_folder
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img_name1 = self.data.iloc[idx]["Image 1"]
+        img_name2 = self.data.iloc[idx]["Image 2"]
+        winner = self.data.iloc[idx]["Winner"]
+
+        img_path1 = os.path.join(self.image_folder, img_name1)
+        img_path2 = os.path.join(self.image_folder, img_name2)
+
+
+        label = 1 if winner == 1 else 0  
+
+        img1 = Image.open(img_path1).convert('RGB')
+        img2 = Image.open(img_path2).convert('RGB')
+
+        if self.transform:
+            img1 = self.transform(img1)
+            img2 = self.transform(img2)
+
+        return img1, img2, torch.tensor(label, dtype=torch.float32), img_name1, img_name2  # Include names for result output
+
+# Define transformations (same as used during training)
+transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+# Load new test CSV
+test_csv = "F:\Contest\\test.csv"  # Change this to your new CSV file
+image_folder = "Questionair Images\Questionair Images\\"  # Change this to your actual image folder
+df_test = pd.read_csv(test_csv)
+
+# Create test dataset and dataloader
+test_dataset = FoodDataset(df_test, image_folder, transform=transform)
+test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)  # Batch size = 1 for easy comparison
+
+# Load the trained model
+model = SiameseNetworkRes34()  # Make sure this is the same model architecture you trained
+model.load_state_dict(torch.load("F:\Contest\\6.pth","cpu"))
+model.eval()  # Set to evaluation mode
+
+total = 0
+correctC = 0
+results = []
+with torch.no_grad():
+    for img1, img2, label, img_name1, img_name2 in test_loader:
+        output1, output2 = model(img1, img2)
+        
+        # Scores are the raw outputs from the Siamese network
+        score1 = output1.item()  # Convert tensor to scalar for easier readability
+        score2 = output2.item()
+
+        # Prediction based on comparison of scores
+        prediction = 1 if score1 > score2 else 0  # 1 if Image 1 is tastier, 0 if Image 2 is tastier
+
+        correct = "✔" if (prediction == 1 and label == 1) or (prediction == 0 and label == 0) else "❌"
+        is_correct = (prediction == label.item())  # Check if the prediction is correct
+
+        correctC += is_correct
+        total += 1
+        
+        # Print result including the predicted scores
+        print(f"{img_name1[0]} vs {img_name2[0]} → Predicted: {prediction} (Actual: {label.item()}) "
+              f"Score1: {score1:.4f}, Score2: {score2:.4f} {correct}")
+
+        # Save result to list with scores
+        results.append([img_name1[0], img_name2[0], prediction, label.item(), score1, score2, correct])
+
+
+# Calculate and print accuracy
+accuracy = (correctC / total) * 100
+print(f"\nTest Accuracy: {accuracy:.2f}%")
+
+# Save results to CSV, including the scores
+results_df = pd.DataFrame(results, columns=["Image 1", "Image 2", "Predicted Winner", "Actual Winner", "Score1", "Score2", "Correct?"])
+results_df.to_csv("f:/Contest/test_results.csv", index=False)
+print("Results saved to 'test_results.csv'.")
