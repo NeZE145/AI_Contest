@@ -94,7 +94,7 @@ transform = transforms.Compose([
 ])
 
 # Load new test CSV
-test_csv = "F:\Contest\\test.csv"  # Change this to your new CSV file
+test_csv = "test.csv"  # Change this to your new CSV file
 image_folder = "Questionair Images\Questionair Images\\"  # Change this to your actual image folder
 df_test = pd.read_csv(test_csv)
 
@@ -103,8 +103,8 @@ test_dataset = FoodDataset(df_test, image_folder, transform=transform)
 test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)  # Batch size = 1 for easy comparison
 
 # Load the trained model
-model = SiameseNetworkRes34()  # Make sure this is the same model architecture you trained
-model.load_state_dict(torch.load("F:\Contest\\6.pth","cpu"))
+model = SiameseNetworkResB0()  # Make sure this is the same model architecture you trained
+model.load_state_dict(torch.load("ResB0_2.pth","cpu"))
 model.eval()  # Set to evaluation mode
 
 total = 0

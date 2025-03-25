@@ -7,18 +7,22 @@ from PIL import Image
 import numpy as np
 import pandas as pd
 import os
-import signal
 
-# Define the Siamese Network, Dataset, and other parts of the code as you have done previously
+
+Train_images_folder = "Questionair Images/Questionair Images"  #Folder of images that will be used for training.
+Train_CSV = "data_from_questionaire.csv" 
+
+model_name ="ResnetB0"
+
+
 class SiameseNetwork(nn.Module):
     def __init__(self):
         super(SiameseNetwork, self).__init__()
 
         # Use a pretrained EfficientNet as the feature extractor
         self.base_model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
-        self.base_model.classifier = nn.Identity()  # Remove classification head
+        self.base_model.classifier = nn.Identity()  
 
-        # Fully connected layer for scoring
         self.fc = nn.Linear(1280, 1)  # EfficientNet-B0 outputs 1280 features
 
     def forward(self, img1, img2):
@@ -33,7 +37,7 @@ class SiameseNetwork(nn.Module):
 class FoodDataset(Dataset):
     def __init__(self, csv_file, image_folder, transform=None):
         self.data = pd.read_csv(csv_file)
-        self.image_folder = image_folder  # Folder where images are stored
+        self.image_folder = image_folder  
         self.transform = transform
 
     def __len__(self):
@@ -62,14 +66,14 @@ class FoodDataset(Dataset):
 
 
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),  # Resize for ResNet
+    transforms.Resize((224, 224)), 
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-image_folder = "Questionair Images/Questionair Images"  # Change this to your actual image folder
 
-dataset = FoodDataset(csv_file='data_from_questionaire.csv', image_folder=image_folder, transform=transform)
+image_folder = Train_images_folder 
+dataset = FoodDataset(csv_file=Train_CSV, image_folder=image_folder, transform=transform)
 dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
 
 
@@ -92,49 +96,27 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
 num_epochs = 20
 
-# Add a function to handle emergency stop
-def emergency_stop(signal, frame):
-    print("\nEmergency stop triggered. Saving model...")
-    torch.save(model.state_dict(), "Emergency.pth")
-    print("Model saved successfully!")
-    exit(0)
 
-# Register the emergency stop
-signal.signal(signal.SIGINT, emergency_stop)
+
 total_loss_best = float('inf')  
 
-try:
-    for epoch in range(num_epochs):
-        model.train()
-        total_loss = 0
+for epoch in range(num_epochs):
+    model.train()
+    total_loss = 0
+    for img1, img2, labels in dataloader:
+        img1, img2, labels = img1.to(device), img2.to(device), labels.to(device)
+        optimizer.zero_grad()
+        score1, score2 = model(img1, img2)
+        loss = criterion(score1, score2, labels)
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    avg_loss = total_loss / len(dataloader)
 
-        for img1, img2, labels in dataloader:
-            img1, img2, labels = img1.to(device), img2.to(device), labels.to(device)
+    if avg_loss < total_loss_best:
+        total_loss_best = avg_loss
+        torch.save(model.state_dict(), model_name +"Best_Loss.pth")
+        print("best loss model saved")
+    print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}")
 
-            optimizer.zero_grad()
-
-            score1, score2 = model(img1, img2)
-            loss = criterion(score1, score2, labels)
-
-            loss.backward()
-            optimizer.step()
-
-            total_loss += loss.item()
-
-        # Compute average loss for the epoch
-        avg_loss = total_loss / len(dataloader)
-
-        # Save the model if this epoch's loss is the best so far
-        if avg_loss < total_loss_best:
-            total_loss_best = avg_loss
-            torch.save(model.state_dict(), "ResB0_2_Best_Loss.pth")
-            print("best loss model saved")
-        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}")
-
-    # Save the final model (this will not overwrite the best loss model)
-    torch.save(model.state_dict(), "ResB0_2.pth")
-
-except KeyboardInterrupt:
-    # Handle normal keyboard interrupt if the user presses CTRL+C
-    emergency_stop(None, None)
-
+torch.save(model.state_dict(), model_name+".ptn")
